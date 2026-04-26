@@ -4,7 +4,7 @@ Tests for monitor registration and pause/resume endpoints.
 import pytest
 from fastapi.testclient import TestClient
 
-from main import app
+from app.main import app
 from app import db
 
 
