@@ -1,219 +1,165 @@
 # Idempotency Gateway — Pay-Once Protocol
 
-A FastAPI service that guarantees every payment request is processed **exactly once**, no matter how many times it is retried.
+A FastAPI service that guarantees every payment request is processed **exactly once**, even when a client retries a request.
 
-### Flowchart /Aechtecture diagram
+## Architecture Diagram
 
-The flowchat is included in the file of this forder
+![Architecture Diagram](architecture.png)
+
+This diagram shows the request flow for the idempotency gateway:
+1. Receive a payment request.
+2. Verify the `Idempotency-Key` header.
+3. Lookup the existing key in the in-memory store.
+4. Compare request body hash to determine whether to reuse a previous response, wait for an in-flight request, or reject a conflicting duplicate.
+5. Process the payment once and return the same result for future duplicate requests.
 
 ## Setup Instructions
 
-### Prerequisites
+### Local Python setup
+1. Clone the repo:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/idempotency-gateway.git
+   cd idempotency-gateway
+   ```
+2. Activate the local virtual environment:
+   ```bash
+   source env/bin/activate
+   ```
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Start the service:
+   ```bash
+   uvicorn app:app --reload
+   ```
+5. Open the docs:
+   ```text
+   http://localhost:8000/docs
+   ```
 
-- Python 3.11+
+### Docker setup
+1. Build the image:
+   ```bash
+   docker compose build
+   ```
+2. Run the container:
+   ```bash
+   docker compose up -d
+   ```
+3. Open the docs:
+   ```text
+   http://localhost:8001/docs
+   ```
 
-### 1. Clone & install
-
-```bash
-git clone https://github.com/YOUR_USERNAME/idempotency-gateway.git
-cd idempotency-gateway
-pip install -r requirements.txt
-```
-
-### 2. Start the server
-
-#### Local Python setup
-
-```bash
-uvicorn app:app --reload
-```
-
-#### Docker setup
-
-```bash
-docker compose build
-docker compose up -d
-```
-
-Server runs at **http://localhost:8001** (Docker) or **http://localhost:8000** (local)
-
-Interactive docs: **http://localhost:8001/docs** (Docker) or **http://localhost:8000/docs** (local)
-
-### 3. Run the tests
-
-```bash
-pytest tests.py -v
-
+> In Docker mode, the service is exposed at `http://localhost:8001`.
 
 ## API Documentation
 
-### POST /process-payment`
+### `POST /process-payment`
 
-Process a payment. Supply a unique `Idempotency-Key` header on every request.
+Process a payment with an `Idempotency-Key` header.
 
 #### Headers
 
 | Header            | Required | Description                        |
 |-------------------|----------|------------------------------------|
-| `Idempotency-Key` |  Yes   | Unique string per payment attempt  |
-| `Content-Type`    |  Yes   | `application/json`                 |
+| `Idempotency-Key` | Yes      | Unique string per payment attempt  |
+| `Content-Type`    | Yes      | `application/json`                 |
 
 #### Request body
-""json
+
+```json
 {
   "amount": 100,
   "currency": "GHS"
 }
-""
+```
 
 #### Responses
-[
-  {
-    "scenario": "New request — processed",
-    "status": 201,
-    "x_cache_hit": null,
-    "body": {
-      "message": "Charged 100 GHS"
-    }
-  },
-  {
-    "scenario": "Duplicate request — same body",
-    "status": 201,
-    "x_cache_hit": true,
-    "body": "Exact same body as first response"
-  },
-  {
-    "scenario": "In-flight duplicate",
-    "status": 201,
-    "x_cache_hit": true,
-    "body": "Waits, then returns first response"
-  },
-  {
-    "scenario": "Same key, different body",
-    "status": 422,
-    "x_cache_hit": null,
-    "body": {
-      "detail": "Idempotency key already used..."
-    }
-  },
-  {
-    "scenario": "Missing Idempotency-Key header",
-    "status": 422,
-    "x_cache_hit": null,
-    "body": "FastAPI validation error"
-  }
-]                      |
 
-#### Example — Happy path
+- `201 Created` — New payment processed.
+- `201 Created` — Duplicate request with same body; same response is returned.
+- `422 Unprocessable Entity` — Same key used with a different body.
+- `422 Unprocessable Entity` — Missing `Idempotency-Key` header.
 
-~~~bash
+#### Example
+
+```bash
 curl -X POST http://localhost:8000/process-payment \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: order-abc-001" \
   -d '{"amount": 100, "currency": "GHS"}'
 ```
 
-json
+```json
 {
-"message": "Charged 100.0 GHS",
-"amount": 100.0,
-"currency": "GHS",
-"transaction_id": "TX-5F3A9B1C2E4D",
-"processed_at": 1718000000.123
+  "message": "Charged 100.0 GHS",
+  "amount": 100.0,
+  "currency": "GHS",
+  "transaction_id": "TX-...",
+  "processed_at": 1718000000.123
 }
-
-#### Example — Replay (duplicate)
-
-Send the exact same request again:
-
-~~Bash
-curl -X POST http://localhost:8000/process-payment \
- -H "Content-Type: application/json" \
- -H "Idempotency-Key: order-abc-001" \
- -d '{"amount": 100, "currency": "GHS"}'
-
-Response headers include `X-Cache-Hit: true`. Body is identical to the first call.
-
-#### Example — Conflict (different body, same key)
-
-bash
-curl -X POST http://localhost:8000/process-payment \
- -H "Content-Type: application/json" \
- -H "Idempotency-Key: order-abc-001" \
- -d '{"amount": 500, "currency": "GHS"}'
-
-## response
-
-json
-{ "detail": "Idempotency key already used for a different request body." }
+```
 
 ### `GET /health`
 
-~~bash
-curl http://localhost:8000/health
-~~
+Check service health.
 
-~~json
-{ "status": "ok", "service": "Idempotency Gateway" }
-~~
+```bash
+curl http://localhost:8000/health
+```
+
+```json
+{
+  "status": "ok",
+  "service": "Idempotency Gateway"
+}
+```
 
 ### `GET /admin/keys`
 
-List all active idempotency keys, their status, and age. Expired keys (> 24 h) are pruned automatically.
+List active idempotency keys, their status, and age. Expired keys are pruned automatically.
 
-~~bash
+```bash
 curl http://localhost:8000/admin/keys
-~~
+```
 
-~~json
+```json
 {
-"total": 2,
-"keys": [
-{ "key": "order-abc-001", "status": "COMPLETED", "age_seconds": 42.3 },
-{ "key": "order-abc-002", "status": "PROCESSING", "age_seconds": 1.1 }
-]
-}~~
+  "total": 2,
+  "keys": [
+    { "key": "order-abc-001", "status": "COMPLETED", "age_seconds": 42.3 },
+    { "key": "order-abc-002", "status": "PROCESSING", "age_seconds": 1.1 }
+  ]
+}
+```
 
 ## Design Decisions
 
 ### 1. In-memory store with `asyncio.Event`
 
-The store is a plain Python `dict`. Each record holds an `asyncio.Event` that is `.set()` when the first request completes. Any concurrent duplicate (the in-flight race condition) simply calls `await record.ready.wait()` — it blocks cheaply without spinning, and wakes up the instant the original finishes.
+The service uses a simple Python `dict` as the key store. Each `IdempotencyRecord` includes an `asyncio.Event` so duplicate requests can wait for the first request to complete without racing or duplicating work.
 
-For production, We may need to replace it with the database
+### 2. Body hashing with SHA-256
 
-### 2. Body hashing (SHA-256)
+Request payloads are canonicalized with `json.dumps(..., sort_keys=True)` and hashed using SHA-256. This means matching requests are compared efficiently and safely without storing full request bodies.
 
-The request body is canonicalised (`json.dumps` with `sort_keys=True`) and hashed with SHA-256. Storing the hash — not the raw body — keeps memory usage constant regardless of payload size, and makes the comparison O(1).
+### 3. Deterministic transaction IDs
 
-### 3. Deterministic `transaction_id`
+The `transaction_id` is derived from the `Idempotency-Key`. This ensures the same key always produces the same transaction identifier for auditing and tracking.
 
-The `transaction_id` is derived from the `Idempotency-Key` via MD5. This means the same key always yields the same TX ID, which clients can use for auditing without storing anything themselves.
+### 4. Lazy expiry of idempotency keys
 
-### 4. No `Idempotency-Key` → pass-through
+Expired keys are removed when admin data is requested, avoiding the need for a background cleanup thread while still preventing unbounded memory growth.
 
-Per the flowchart, if the header is absent FastAPI's built-in validation returns `422` immediately, which is consistent with the spec.
+## Developer's Choice — Admin Visibility & Key Expiry
 
----
+**Why:** Idempotency keys should not live forever in a real payment system. Keeping them indefinitely wastes memory and makes it harder for operators to know which keys are active.
 
-## Developer's Choice — Key Expiry & Ops Visibility (`GET /admin/keys`)
+**What I added:**
+- `GET /admin/keys` to list active keys, status, and age.
+- Automatic pruning of expired keys older than 24 hours.
+- Operational visibility into in-flight vs completed payments.
 
-**Why:** In a real Fintech system, idempotency keys should not live forever. Holding them indefinitely wastes memory and can block legitimate re-use of the same payment reference after a business day. Stripe, for example, expires keys after **24 hours**.
-
-**What was added:**
-
-- Every `IdempotencyRecord` stores a `created_at` timestamp.
-- A configurable `KEY_TTL_SECONDS` constant (default 86 400 s / 24 h) controls expiry.
-- The `GET /admin/keys` endpoint lists all active keys with their status and age, and **prunes expired keys** on every call — a lightweight lazy-expiry strategy that avoids background threads.
-
-This gives ops teams real-time visibility into in-flight vs. completed payments and prevents unbounded memory growth in long-running processes.
-
----
-
-## Project Structure
-
-idempotency-gateway/
-├── main.py # FastAPI application
-├── test.py # pytest test suite
-├── requirements.txt # Python dependencies
-└── README.md # This file
+This makes the gateway more robust for support and operations teams, not just for clients sending payment requests.
