@@ -17,7 +17,7 @@ The architecture is intentionally lightweight:
 ### Local Python setup
 1. Clone the repo:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/mugishab2020/AmaliTech-DEG-Project-based-challenges.git
    cd backend/Pulse-Check
    ```
 2. Create and activate a Python virtual environment:
